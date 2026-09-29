@@ -66,3 +66,13 @@ Users created automatically by the plugin receive the permission when they are c
 
 - Use LDAPv3 with StartTLS or `ldaps://` for the LDAP auto-creation mode, so that the bind password is not sent in clear text.
 - The local login form stays available with `?noAuthCAS=true`. Restrict access to it (IP filtering on the web server, brute force protection) if you do not need it.
+
+## Troubleshooting
+
+If LimeSurvey displays its local login form instead of redirecting to CAS, run the diagnostic script from the command line, with the web server user:
+
+```
+sudo -u www-data php tools/check-authcas.php /path/to/limesurvey [cas_login]
+```
+
+It checks the plugin files, the plugin settings (`serviceBaseUrl`, `casCACert`...), the TLS connection to the CAS server and, if `cas_login` is given, whether this user is allowed to log in with CAS. It only reads the database. Do not copy this script into a directory served by the web server.
