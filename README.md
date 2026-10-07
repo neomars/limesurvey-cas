@@ -92,5 +92,5 @@ It checks the plugin files, the plugin settings (`serviceBaseUrl`, `casCACert`..
 
 ## Authors
 
-- Guillaume Colson, Denis Chenou (original plugin)
+- Guillaume Colson, Denis Chenu (original plugin)
 - Modification Martial Limousin (CAS security fixes, diagnostic script, debug mode)
