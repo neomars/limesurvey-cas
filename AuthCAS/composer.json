@@ -8,6 +8,10 @@
         {
             "name": "Guillaume Colson",
             "homepage": "https://github.com/goyome"
+        },
+        {
+            "name": "Martial Limousin",
+            "role": "Modification Martial Limousin"
         }
     ],
     "require": {

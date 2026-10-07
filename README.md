@@ -89,3 +89,8 @@ sudo -u www-data php tools/check-authcas.php /path/to/limesurvey [cas_login]
 ```
 
 It checks the plugin files, the plugin settings (`serviceBaseUrl`, `casCACert`...), the TLS connection to the CAS server and, if `cas_login` is given, whether this user is allowed to log in with CAS. It only reads the database. Do not copy this script into a directory served by the web server.
+
+## Authors
+
+- Guillaume Colson, Denis Chenou (original plugin)
+- Modification Martial Limousin (CAS security fixes, diagnostic script, debug mode)

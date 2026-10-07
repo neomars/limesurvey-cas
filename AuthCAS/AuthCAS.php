@@ -4,6 +4,7 @@
  *
  * @author Guillaume Colson <https://github.com/goyome>
  * @author Denis Chenu <https://www.sondages.pro>
+ * @author Martial Limousin (Modification Martial Limousin)
  * @copyright 2015-2022 Université de Lorraine
  * @license GPL v2
  * @version 7.0.0
