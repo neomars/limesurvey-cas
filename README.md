@@ -67,6 +67,17 @@ Users created automatically by the plugin receive the permission when they are c
 - Use LDAPv3 with StartTLS or `ldaps://` for the LDAP auto-creation mode, so that the bind password is not sent in clear text.
 - The local login form stays available with `?noAuthCAS=true`. Restrict access to it (IP filtering on the web server, brute force protection) if you do not need it.
 
+## Debug mode
+
+Check the `casDebug` setting in the plugin configuration to trace every step of a CAS login. The plugin then writes, in `tmp/runtime/AuthCAS-debug.log` (the exact path is shown in the setting label):
+
+- the plugin settings used and the CAS login URL and service URL that are built,
+- the user returned by the CAS server and the names of the attributes it sent (not their values),
+- whether the user exists in LimeSurvey, whether they have the `auth_cas` permission, and why a login is refused,
+- the phpCAS trace (requests to the CAS server, ticket validation).
+
+CAS tickets and passwords are masked, but the file contains user logins: the file is created with mode `0600`, emptied when it exceeds 5 MB, and the debug mode must be disabled once the problem is solved. If the file cannot be written by the web server user, the messages go to the LimeSurvey log instead.
+
 ## Troubleshooting
 
 If LimeSurvey displays its local login form instead of redirecting to CAS, run the diagnostic script from the command line, with the web server user:

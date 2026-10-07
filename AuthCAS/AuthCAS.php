@@ -56,6 +56,11 @@ class AuthCAS extends AuthPluginBase
             'label' => 'Path to the CA certificate (bundle) used to validate the CAS server certificate (e.g. /etc/ssl/certs/ca-certificates.crt). Required',
             'default' => '',
         ),
+        'casDebug' => array(
+            'type' => 'boolean',
+            'label' => 'Debug mode: write the details of each CAS login step (settings, CAS answer, user lookup, permission check, phpCAS trace) in a log file. Tickets and passwords are masked but the file contains logins: disable it once the problem is solved',
+            'default' => '0',
+        ),
         'autoGrantCasPermission' => array(
             'type' => 'boolean',
             'label' => 'Automatically grant the "Use CAS authentication" permission to existing (non superadmin) users without explicit setting. Not recommended: a CAS user with the same login as a local account gets access to that account',
@@ -146,6 +151,7 @@ class AuthCAS extends AuthPluginBase
          * Here you should handle subscribing to the events your plugin will handle
          */
         require_once __DIR__ . '/vendor/autoload.php';
+        require_once __DIR__ . '/AuthCASDebugLogger.php';
         $this->subscribe('beforeLogin');
         $this->subscribe('newUserSession');
         $this->subscribe('beforeLogout');
@@ -180,6 +186,9 @@ class AuthCAS extends AuthPluginBase
     public function getPluginSettings($getValues = true)
     {
         $aPluginSettings = parent::getPluginSettings($getValues);
+        if (isset($aPluginSettings['casDebug'])) {
+            $aPluginSettings['casDebug']['label'] .= ' (file: ' . $this->getDebugFile() . ')';
+        }
         if ($getValues) 
         {
             $ldapver = $aPluginSettings['ldapversion']['current'];
@@ -228,17 +237,23 @@ class AuthCAS extends AuthPluginBase
 
     public function beforeLogin() 
     {
+      $this->debug('beforeLogin: ' . $this->api->getRequest()->getRequestType() . ' ' . $this->api->getRequest()->getUrl());
       if (!is_null($this->api->getRequest()->getParam('noAuthCAS')) || ($this->api->getRequest()->getIsPostRequest())) {
         # Local authentication forced through 'noAuthCAS' url parameter
+        $this->debug('beforeLogin: local authentication (noAuthCAS parameter or POST request), CAS is skipped');
         $this->getEvent()->set('default', "Authdb");
         return;
       } else {
         // configure phpCAS
         if (!$this->initCasClient()) {
+            $this->debug('beforeLogin: CAS client not initialized, the local login form is displayed');
             return;
         }
         //force CAS authentication
+        $this->debug('beforeLogin: phpCAS::forceAuthentication() (redirects to the CAS server if there is no valid ticket)');
         phpCAS::forceAuthentication();
+        $this->debug('beforeLogin: user authenticated by the CAS server: "' . phpCAS::getUser() . '"');
+        $this->debugAttributes();
 
         // Put the user coming from phpCAS in lowercase
         $cas_userid_to_lowercase = $this->get('casUserIdToLowercase');
@@ -254,15 +269,19 @@ class AuthCAS extends AuthPluginBase
         if ($oUser) {
             // Existing user: CAS login is allowed only with the auth_cas permission, even if autoCreate is set
             $allowed = $this->checkLoginCasPermission($oUser->uid);
+            $this->debug('beforeLogin: LimeSurvey user "' . $this->getUserName() . '" found (uid ' . $oUser->uid . '), auth_cas permission: ' . ($allowed ? 'yes' : 'NO'));
         } else {
             $allowed = ((int) $this->get('autoCreate') > 0);
+            $this->debug('beforeLogin: LimeSurvey user "' . $this->getUserName() . '" NOT found, autoCreate = ' . (int) $this->get('autoCreate') . ' => ' . ($allowed ? 'will be created' : 'refused'));
         }
         if ($allowed)
         {
             // User authenticated and found. Cas become the authentication system
+            $this->debug('beforeLogin: CAS login accepted, AuthCAS becomes the authentication plugin');
             $authEvent->set('default', get_class($this));
             $this->setAuthPlugin($authEvent); // This plugin handles authentication, halt further execution of auth plugins
         } else {
+            $this->debug('beforeLogin: CAS login refused, the local login form is displayed');
             $this->log(
                 'CAS login refused for "' . $this->getUserName() . '": ' . ($oUser
                     ? 'user has no "Use CAS authentication" (auth_cas) permission'
@@ -286,9 +305,11 @@ class AuthCAS extends AuthPluginBase
         }
         $authEvent = $this->getEvent();
         $sUser = $this->getUserName();
+        $this->debug('newUserSession: opening the session of "' . $sUser . '"');
 
         $oUser = $this->api->getUserByName($sUser);
         if ($oUser && !$this->checkLoginCasPermission($oUser->uid)) {
+            $this->debug('newUserSession: refused, no auth_cas permission');
             $this->log('CAS login refused for "' . $sUser . '": no auth_cas permission', CLogger::LEVEL_WARNING);
             $this->setAuthFailure(self::ERROR_USERNAME_INVALID);
             return;
@@ -396,6 +417,7 @@ class AuthCAS extends AuthPluginBase
                     $oUser->full_name = isset($userentry[0][$fullnamekey][0]) ? $userentry[0][$fullnamekey][0] : '';
                     $oUser->parent_id = 1;
                     $oUser->email = isset($userentry[0]["mail"][0]) ? $userentry[0]["mail"][0] : '';
+                    $this->debug('newUserSession: autoCreate from LDAP, user "' . $username . '" found in the directory');
 
 
                     if ($oUser->save()) 
@@ -422,6 +444,7 @@ class AuthCAS extends AuthPluginBase
                         }
 
                         // read again user from newly created entry
+                        $this->debug('newUserSession: user "' . $username . '" created (uid ' . $oUser->uid . ')');
                         $this->setAuthSuccess($oUser, $authEvent);
 
                         // fire afterAutoCreate event
@@ -441,6 +464,7 @@ class AuthCAS extends AuthPluginBase
                 {
                     // if no entry or more than one entry returned
                     // then deny authentication
+                    $this->debug('newUserSession: autoCreate from LDAP failed, ' . $rescount . ' entries found for "' . $username . '"');
                     $this->log('CAS/LDAP auto-creation: ' . $rescount . ' LDAP entries found for "' . $username . '" (' . ldap_error($ldapconn) . ')', CLogger::LEVEL_WARNING);
                     $this->setAuthFailure(self::ERROR_USERNAME_INVALID);
                     ldap_close($ldapconn); // all done? close connection
@@ -459,6 +483,7 @@ class AuthCAS extends AuthPluginBase
                     $this->setAuthFailure(self::ERROR_USERNAME_INVALID);
                     throw new CHttpException(401, 'Authentication failed.');
                 }
+                $this->debug('newUserSession: autoCreate from CAS attributes, fullname attribute "' . $this->get('casFullnameAttr') . '", mail attribute "' . $this->get('casMailAttr') . '"');
                 $oUser = new User;
                 $oUser->users_name = phpCAS::getUser();
                 if ($cas_userid_to_lowercase) {
@@ -475,6 +500,7 @@ class AuthCAS extends AuthPluginBase
                         Permission::setPermissions($oUser->uid, 0, 'global', $this->api->getConfigKey('auth_cas_autocreate_permissions'), true);
                     }
                     Permission::model()->setGlobalPermission($oUser->uid, 'auth_cas');
+                    $this->debug('newUserSession: user "' . $oUser->users_name . '" created (uid ' . $oUser->uid . ')');
                     $this->setAuthSuccess($oUser, $authEvent);
 
                     // fire afterAutoCreate event
@@ -492,6 +518,7 @@ class AuthCAS extends AuthPluginBase
             }
         } else 
         {
+            $this->debug('newUserSession: session opened for the existing user "' . $sUser . '" (uid ' . $oUser->uid . ')');
             $this->setAuthSuccess($oUser, $authEvent);
             return;
         }
@@ -499,6 +526,7 @@ class AuthCAS extends AuthPluginBase
 
     public function beforeLogout() 
     {
+        $this->debug('beforeLogout');
         // configure phpCAS
         if (!$this->initCasClient()) {
             return;
@@ -519,16 +547,30 @@ class AuthCAS extends AuthPluginBase
         $cas_host = $this->get('casAuthServer');
         $service_base_url = trim((string) $this->get('serviceBaseUrl'));
         $ca_cert = trim((string) $this->get('casCACert'));
+        $this->debug(
+            'initCasClient: casAuthServer="' . $cas_host . '" casAuthPort=' . (int) $this->get('casAuthPort')
+            . ' casAuthUri="' . $this->get('casAuthUri') . '" casVersion=' . $this->get('casVersion')
+            . ' serviceBaseUrl="' . $service_base_url . '" casCACert="' . $ca_cert . '"'
+            . ' autoCreate=' . (int) $this->get('autoCreate') . ' casUserIdToLowercase=' . (int) $this->get('casUserIdToLowercase')
+            . ' autoGrantCasPermission=' . (int) $this->get('autoGrantCasPermission') . ' is_default=' . var_export($this->get('is_default', null, null), true)
+        );
         if (empty($cas_host)) {
+            $this->debug('initCasClient: ERROR casAuthServer is empty');
             return false;
         }
         if (!preg_match('#^https?://[^/?\#]+#i', $service_base_url)) {
+            $this->debug('initCasClient: ERROR serviceBaseUrl is missing or invalid (it must look like https://survey.example.org)');
             $this->log('CAS authentication disabled: "serviceBaseUrl" setting is missing or invalid', CLogger::LEVEL_ERROR);
             return false;
         }
         if (empty($ca_cert) || !is_readable($ca_cert)) {
+            $this->debug('initCasClient: ERROR casCACert is missing or the file is not readable by the web server user (open_basedir ?)');
             $this->log('CAS authentication disabled: "casCACert" setting is missing or the file is not readable', CLogger::LEVEL_ERROR);
             return false;
+        }
+        if ($this->isDebug() && $this->getDebugLogger()->isWritable()) {
+            // phpCAS trace (requests to the CAS server, ticket validation, answers) goes to the debug file
+            phpCAS::setLogger($this->getDebugLogger());
         }
         // Initialize phpCAS (service_base_url avoids building the service URL from the Host header : CVE-2022-39369)
         phpCAS::client(
@@ -541,7 +583,78 @@ class AuthCAS extends AuthPluginBase
         );
         // validate the SSL certificate of the CAS server
         phpCAS::setCasServerCACert($ca_cert, true);
+        if ($this->isDebug()) {
+            try {
+                $this->debug('initCasClient: CAS login URL: ' . phpCAS::getServerLoginURL());
+                $this->debug('initCasClient: service URL sent to CAS: ' . phpCAS::getServiceURL());
+            } catch (Exception $e) {
+                $this->debug('initCasClient: unable to compute the CAS URLs: ' . $e->getMessage());
+            }
+        }
         return true;
+    }
+
+    /**
+     * @return boolean true if the debug mode is enabled in the plugin settings
+     */
+    private function isDebug()
+    {
+        return (bool) $this->get('casDebug');
+    }
+
+    /**
+     * @return string path of the debug file
+     */
+    private function getDebugFile()
+    {
+        return rtrim(App()->getRuntimePath(), '/\\') . DIRECTORY_SEPARATOR . 'AuthCAS-debug.log';
+    }
+
+    /**
+     * @return AuthCASDebugLogger
+     */
+    private function getDebugLogger()
+    {
+        static $logger = null;
+        if ($logger === null) {
+            $logger = new AuthCASDebugLogger($this->getDebugFile());
+        }
+        return $logger;
+    }
+
+    /**
+     * Write a line in the debug file, only if the debug mode is enabled.
+     * If the file can not be written, the message goes to the LimeSurvey log.
+     * @param string $message
+     * @return void
+     */
+    private function debug($message)
+    {
+        if (!$this->isDebug()) {
+            return;
+        }
+        $logger = $this->getDebugLogger();
+        $logger->write($message);
+        if (!$logger->isWritable()) {
+            $this->log('AuthCAS debug (cannot write ' . $logger->getFile() . '): ' . AuthCASDebugLogger::mask($message), CLogger::LEVEL_WARNING);
+        }
+    }
+
+    /**
+     * Debug: list the names of the attributes returned by the CAS server (values are not logged)
+     * @return void
+     */
+    private function debugAttributes()
+    {
+        if (!$this->isDebug()) {
+            return;
+        }
+        try {
+            $attributes = phpCAS::getAttributes();
+            $this->debug('CAS attributes returned by the server: ' . (empty($attributes) ? '(none)' : implode(', ', array_keys($attributes))));
+        } catch (Exception $e) {
+            $this->debug('CAS attributes: unable to read them: ' . $e->getMessage());
+        }
     }
 
     /**
