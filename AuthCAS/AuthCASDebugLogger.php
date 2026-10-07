@@ -3,12 +3,15 @@
  * Debug logger of the AuthCAS plugin.
  *
  * It writes to a dedicated file and is also usable as a logger by phpCAS (phpCAS only calls info()).
- * Tickets, passwords and session identifiers are masked before being written.
+ * Tickets, passwords, cookies and the values of the CAS attributes are masked before being written.
  */
 class AuthCASDebugLogger
 {
-    /** Above this size the file is emptied, so that debug mode left on cannot fill the disk */
+    /** Above this size the file is moved to <file>.1 (replacing the previous one), so that debug mode left on cannot fill the disk */
     const MAX_SIZE = 5242880;
+
+    /** A message longer than this is cut */
+    const MAX_MESSAGE = 20000;
 
     /** @var string */
     private $file;
@@ -88,21 +91,27 @@ class AuthCASDebugLogger
      */
     public function write($message)
     {
-        $message = self::mask((string) $message);
+        $message = (string) $message;
+        if (strlen($message) > self::MAX_MESSAGE) {
+            $message = substr($message, 0, self::MAX_MESSAGE) . ' [message cut]';
+        }
+        $message = self::mask($message);
+        // no control character (terminal escape sequences), and the lines of a multi-line message are indented:
+        // data coming from a request can not forge a line looking like a log entry
+        $message = preg_replace('/[\x00-\x09\x0b-\x1f\x7f]/', '?', $message);
+        $message = str_replace("\n", "\n    ", $message);
         $line = date('Y-m-d H:i:s') . ' [' . substr(md5((string) getmypid()), 0, 4) . '] ' . $message . "\n";
-        $flags = FILE_APPEND | LOCK_EX;
+
         clearstatcache(true, $this->file);
         if (is_file($this->file) && @filesize($this->file) > self::MAX_SIZE) {
-            $flags = LOCK_EX;
-            $line = date('Y-m-d H:i:s') . " [log truncated: size limit reached]\n" . $line;
+            @rename($this->file, $this->file . '.1');
         }
-        $isNew = !is_file($this->file);
-        if (@file_put_contents($this->file, $line, $flags) === false) {
+        // the file is created readable by the web server user only
+        $oldUmask = umask(0077);
+        $result = @file_put_contents($this->file, $line, FILE_APPEND | LOCK_EX);
+        umask($oldUmask);
+        if ($result === false) {
             $this->failed = true;
-            return;
-        }
-        if ($isNew) {
-            @chmod($this->file, 0600);
         }
     }
 
@@ -115,9 +124,22 @@ class AuthCASDebugLogger
     {
         // CAS tickets (ST-, PT-, PGT-, PGTIOU-, TGT-...), in URLs and in XML answers
         $message = preg_replace('/\b((?:ST|PT|PGT|PGTIOU|TGT|LT)-)[A-Za-z0-9._\-]+/', '$1***', $message);
-        $message = preg_replace('/(ticket=)[^&\s"\'<]+/i', '$1***', $message);
+        $message = preg_replace('/(ticket(?:=|%3D))[^&\s"\'<]+/i', '$1***', $message);
         // password, session cookies and tokens
         $message = preg_replace('/\b((?:pass(?:word)?|pwd|PHPSESSID|LS-[A-Za-z0-9]+|YII_CSRF_TOKEN)[=:\s"\']+)[^&\s"\';<]+/i', '$1***', $message);
+        // cookies traced by phpCAS: "Cookie Line: NAME=value; Path=/" and "NAME -> value"
+        $message = preg_replace('/^(\s*Cookie Line:).*$/mi', '$1 ***', $message);
+        $message = preg_replace('/^(\s*[\w.\-]+ -> ).*$/m', '$1***', $message);
+        // values of the attributes traced by phpCAS: "* name=value" and print_r() dumps "[name] => value"
+        $message = preg_replace('/^(\s*\* [^=\s]+=).*$/m', '$1***', $message);
+        $message = preg_replace('/^(\s*\[[^\]]*\] => ).*$/m', '$1***', $message);
+        // text of the XML elements of the CAS answer (attribute values, credentials), except the user name
+        $message = preg_replace_callback('#<([\w.\-]+(?::[\w.\-]+)?)(\s[^>]*)?>([^<]+)</\1>#', function ($m) {
+            if (strcasecmp($m[1], 'cas:user') === 0) {
+                return $m[0];
+            }
+            return '<' . $m[1] . (isset($m[2]) ? $m[2] : '') . '>***</' . $m[1] . '>';
+        }, $message);
         return $message;
     }
 }

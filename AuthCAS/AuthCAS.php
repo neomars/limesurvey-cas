@@ -58,7 +58,7 @@ class AuthCAS extends AuthPluginBase
         ),
         'casDebug' => array(
             'type' => 'boolean',
-            'label' => 'Debug mode: write the details of each CAS login step (settings, CAS answer, user lookup, permission check, phpCAS trace) in a log file. Tickets and passwords are masked but the file contains logins: disable it once the problem is solved',
+            'label' => 'Debug mode: write the details of each CAS login step (settings, CAS answer, user lookup, permission check, phpCAS trace) in a log file. Tickets, passwords and attribute values are masked but the file contains logins: disable it and delete the file once the problem is solved',
             'default' => '0',
         ),
         'autoGrantCasPermission' => array(
@@ -151,7 +151,6 @@ class AuthCAS extends AuthPluginBase
          * Here you should handle subscribing to the events your plugin will handle
          */
         require_once __DIR__ . '/vendor/autoload.php';
-        require_once __DIR__ . '/AuthCASDebugLogger.php';
         $this->subscribe('beforeLogin');
         $this->subscribe('newUserSession');
         $this->subscribe('beforeLogout');
@@ -245,7 +244,9 @@ class AuthCAS extends AuthPluginBase
 
     public function beforeLogin() 
     {
-      $this->debug('beforeLogin: ' . $this->api->getRequest()->getRequestType() . ' ' . $this->api->getRequest()->getUrl());
+      if ($this->isDebug()) {
+          $this->debug('beforeLogin: ' . $this->api->getRequest()->getRequestType() . ' ' . $this->api->getRequest()->getUrl());
+      }
       if (!is_null($this->api->getRequest()->getParam('noAuthCAS')) || ($this->api->getRequest()->getIsPostRequest())) {
         # Local authentication forced through 'noAuthCAS' url parameter
         $this->debug('beforeLogin: local authentication (noAuthCAS parameter or POST request), CAS is skipped');
@@ -260,7 +261,9 @@ class AuthCAS extends AuthPluginBase
         //force CAS authentication
         $this->debug('beforeLogin: phpCAS::forceAuthentication() (redirects to the CAS server if there is no valid ticket)');
         phpCAS::forceAuthentication();
-        $this->debug('beforeLogin: user authenticated by the CAS server: "' . phpCAS::getUser() . '"');
+        if ($this->isDebug()) {
+            $this->debug('beforeLogin: user authenticated by the CAS server: "' . phpCAS::getUser() . '"');
+        }
         $this->debugAttributes();
 
         // Put the user coming from phpCAS in lowercase
@@ -280,7 +283,9 @@ class AuthCAS extends AuthPluginBase
             $this->debug('beforeLogin: LimeSurvey user "' . $this->getUserName() . '" found (uid ' . $oUser->uid . '), auth_cas permission: ' . ($allowed ? 'yes' : 'NO'));
         } else {
             $allowed = ((int) $this->get('autoCreate') > 0);
-            $this->debug('beforeLogin: LimeSurvey user "' . $this->getUserName() . '" NOT found, autoCreate = ' . (int) $this->get('autoCreate') . ' => ' . ($allowed ? 'will be created' : 'refused'));
+            if ($this->isDebug()) {
+                $this->debug('beforeLogin: LimeSurvey user "' . $this->getUserName() . '" NOT found, autoCreate = ' . (int) $this->get('autoCreate') . ' => ' . ($allowed ? 'will be created' : 'refused'));
+            }
         }
         if ($allowed)
         {
@@ -555,13 +560,15 @@ class AuthCAS extends AuthPluginBase
         $cas_host = $this->get('casAuthServer');
         $service_base_url = trim((string) $this->get('serviceBaseUrl'));
         $ca_cert = trim((string) $this->get('casCACert'));
-        $this->debug(
-            'initCasClient: casAuthServer="' . $cas_host . '" casAuthPort=' . (int) $this->get('casAuthPort')
-            . ' casAuthUri="' . $this->get('casAuthUri') . '" casVersion=' . $this->get('casVersion')
-            . ' serviceBaseUrl="' . $service_base_url . '" casCACert="' . $ca_cert . '"'
-            . ' autoCreate=' . (int) $this->get('autoCreate') . ' casUserIdToLowercase=' . (int) $this->get('casUserIdToLowercase')
-            . ' autoGrantCasPermission=' . (int) $this->get('autoGrantCasPermission') . ' is_default=' . var_export($this->get('is_default', null, null), true)
-        );
+        if ($this->isDebug()) {
+            $this->debug(
+                'initCasClient: casAuthServer="' . $cas_host . '" casAuthPort=' . (int) $this->get('casAuthPort')
+                . ' casAuthUri="' . $this->get('casAuthUri') . '" casVersion=' . $this->get('casVersion')
+                . ' serviceBaseUrl="' . $service_base_url . '" casCACert="' . $ca_cert . '"'
+                . ' autoCreate=' . (int) $this->get('autoCreate') . ' casUserIdToLowercase=' . (int) $this->get('casUserIdToLowercase')
+                . ' autoGrantCasPermission=' . (int) $this->get('autoGrantCasPermission') . ' is_default=' . var_export($this->get('is_default', null, null), true)
+            );
+        }
         if (empty($cas_host)) {
             $this->debug('initCasClient: ERROR casAuthServer is empty');
             return false;
@@ -618,7 +625,7 @@ class AuthCAS extends AuthPluginBase
         // column-reverse : the box is scrolled to the end of the log (the most recent lines) when displayed
         return '<div style="max-height:30em;overflow:auto;display:flex;flex-direction:column-reverse;border:1px solid #ccc;">'
             . '<pre style="margin:0;border:0;white-space:pre-wrap;word-break:break-all;font-size:12px;">'
-            . CHtml::encode($log)
+            . htmlspecialchars($log, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')
             . '</pre></div>';
     }
 
@@ -627,7 +634,11 @@ class AuthCAS extends AuthPluginBase
      */
     private function isDebug()
     {
-        return (bool) $this->get('casDebug');
+        static $debug = null;
+        if ($debug === null) {
+            $debug = (bool) $this->get('casDebug');
+        }
+        return $debug;
     }
 
     /**
@@ -635,7 +646,9 @@ class AuthCAS extends AuthPluginBase
      */
     private function getDebugFile()
     {
-        return rtrim(App()->getRuntimePath(), '/\\') . DIRECTORY_SEPARATOR . 'AuthCAS-debug.log';
+        // the name contains a hash of the database credentials: the file can not be guessed if the runtime directory is served by the web server
+        $secret = hash('sha256', 'AuthCAS' . App()->db->connectionString . App()->db->username . App()->db->password);
+        return rtrim(App()->getRuntimePath(), '/\\') . DIRECTORY_SEPARATOR . 'AuthCAS-debug-' . substr($secret, 0, 16) . '.log';
     }
 
     /**
@@ -645,6 +658,8 @@ class AuthCAS extends AuthPluginBase
     {
         static $logger = null;
         if ($logger === null) {
+            // init() is not called when the settings page of an inactive plugin is displayed
+            require_once __DIR__ . '/AuthCASDebugLogger.php';
             $logger = new AuthCASDebugLogger($this->getDebugFile());
         }
         return $logger;

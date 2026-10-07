@@ -69,7 +69,7 @@ Users created automatically by the plugin receive the permission when they are c
 
 ## Debug mode
 
-Check the `casDebug` setting in the plugin configuration to trace every step of a CAS login. The plugin then writes, in `tmp/runtime/AuthCAS-debug.log` (the exact path is shown in the setting label):
+Check the `casDebug` setting in the plugin configuration to trace every step of a CAS login. The plugin then writes, in `tmp/runtime/AuthCAS-debug-<hash>.log` (the exact path is shown in the setting label):
 
 - the plugin settings used and the CAS login URL and service URL that are built,
 - the user returned by the CAS server and the names of the attributes it sent (not their values),
@@ -78,7 +78,7 @@ Check the `casDebug` setting in the plugin configuration to trace every step of 
 
 The last 300 lines of this file are also displayed in the plugin settings page, under the `casDebug` checkbox (reload the page to refresh them; the box is scrolled to the most recent lines).
 
-CAS tickets and passwords are masked, but the file contains user logins: the file is created with mode `0600`, emptied when it exceeds 5 MB, and the debug mode must be disabled once the problem is solved. If the file cannot be written by the web server user, the messages go to the LimeSurvey log instead.
+CAS tickets, passwords, cookies and the values of the CAS attributes (mail, name, groups...) are masked, but the file contains user logins. The file name contains a hash of the database credentials (`AuthCAS-debug-<hash>.log`) and is created with mode `0600`. When it exceeds 5 MB it is moved to `AuthCAS-debug-<hash>.log.1` (replacing the previous one). Make sure the `tmp/` directory is not served by your web server, and disable the debug mode and delete these files once the problem is solved: unchecking the setting does not delete them. If the file cannot be written by the web server user, the messages go to the LimeSurvey log instead.
 
 ## Troubleshooting
 
