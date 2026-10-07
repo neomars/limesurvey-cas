@@ -262,10 +262,17 @@ class AuthCAS extends AuthPluginBase
             // User authenticated and found. Cas become the authentication system
             $authEvent->set('default', get_class($this));
             $this->setAuthPlugin($authEvent); // This plugin handles authentication, halt further execution of auth plugins
-        } elseif ($this->get('is_default', null, null)) 
-        {
-            // Fall back to another authentication mecanism
-            throw new CHttpException(401, 'Wrong credentials for LimeSurvey administration.');
+        } else {
+            $this->log(
+                'CAS login refused for "' . $this->getUserName() . '": ' . ($oUser
+                    ? 'user has no "Use CAS authentication" (auth_cas) permission'
+                    : 'user does not exist and autoCreate is disabled'),
+                CLogger::LEVEL_WARNING
+            );
+            if ($this->get('is_default', null, null)) {
+                // Fall back to another authentication mecanism
+                throw new CHttpException(401, 'Wrong credentials for LimeSurvey administration.');
+            }
         }
       }
     }
