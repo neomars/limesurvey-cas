@@ -188,6 +188,14 @@ class AuthCAS extends AuthPluginBase
         $aPluginSettings = parent::getPluginSettings($getValues);
         if (isset($aPluginSettings['casDebug'])) {
             $aPluginSettings['casDebug']['label'] .= ' (file: ' . $this->getDebugFile() . ')';
+            if ($getValues) {
+                // The log is displayed on the settings page (only when displaying: not a value to save)
+                $aPluginSettings['casDebugLog'] = array(
+                    'type' => 'info',
+                    'label' => 'Debug log (last lines, reload the page to refresh)',
+                    'content' => $this->getDebugLogHtml(),
+                );
+            }
         }
         if ($getValues) 
         {
@@ -592,6 +600,26 @@ class AuthCAS extends AuthPluginBase
             }
         }
         return true;
+    }
+
+    /**
+     * HTML of the end of the debug file, for the plugin settings page
+     * @return string
+     */
+    private function getDebugLogHtml()
+    {
+        $log = $this->getDebugLogger()->tail(300);
+        if ($log === null) {
+            $text = $this->isDebug()
+                ? 'The log is empty: try to log in with CAS in another browser window, then reload this page. If it stays empty, the web server user cannot write ' . $this->getDebugFile()
+                : 'No log file. Enable the debug mode, try to log in with CAS in another browser window, then reload this page.';
+            return '<em>' . CHtml::encode($text) . '</em>';
+        }
+        // column-reverse : the box is scrolled to the end of the log (the most recent lines) when displayed
+        return '<div style="max-height:30em;overflow:auto;display:flex;flex-direction:column-reverse;border:1px solid #ccc;">'
+            . '<pre style="margin:0;border:0;white-space:pre-wrap;word-break:break-all;font-size:12px;">'
+            . CHtml::encode($log)
+            . '</pre></div>';
     }
 
     /**

@@ -76,6 +76,8 @@ Check the `casDebug` setting in the plugin configuration to trace every step of 
 - whether the user exists in LimeSurvey, whether they have the `auth_cas` permission, and why a login is refused,
 - the phpCAS trace (requests to the CAS server, ticket validation).
 
+The last 300 lines of this file are also displayed in the plugin settings page, under the `casDebug` checkbox (reload the page to refresh them; the box is scrolled to the most recent lines).
+
 CAS tickets and passwords are masked, but the file contains user logins: the file is created with mode `0600`, emptied when it exceeds 5 MB, and the debug mode must be disabled once the problem is solved. If the file cannot be written by the web server user, the messages go to the LimeSurvey log instead.
 
 ## Troubleshooting

@@ -41,6 +41,37 @@ class AuthCASDebugLogger
     }
 
     /**
+     * Last lines of the log file (read from the end: the file may be several MB)
+     * @param integer $maxLines
+     * @return string|null null if there is no file or it can not be read
+     */
+    public function tail($maxLines = 300)
+    {
+        clearstatcache(true, $this->file);
+        if (!is_file($this->file) || !is_readable($this->file)) {
+            return null;
+        }
+        $size = (int) @filesize($this->file);
+        $fh = @fopen($this->file, 'rb');
+        if (!$fh) {
+            return null;
+        }
+        $length = min($size, 262144);
+        if ($length > 0) {
+            fseek($fh, $size - $length);
+            $content = (string) fread($fh, $length);
+        } else {
+            $content = '';
+        }
+        fclose($fh);
+        $lines = explode("\n", rtrim($content, "\n"));
+        if ($size > $length) {
+            array_shift($lines); // first line is probably cut
+        }
+        return self::mask(implode("\n", array_slice($lines, -$maxLines)));
+    }
+
+    /**
      * Method used by phpCAS
      * @param string $message
      * @param array $context
@@ -60,6 +91,7 @@ class AuthCASDebugLogger
         $message = self::mask((string) $message);
         $line = date('Y-m-d H:i:s') . ' [' . substr(md5((string) getmypid()), 0, 4) . '] ' . $message . "\n";
         $flags = FILE_APPEND | LOCK_EX;
+        clearstatcache(true, $this->file);
         if (is_file($this->file) && @filesize($this->file) > self::MAX_SIZE) {
             $flags = LOCK_EX;
             $line = date('Y-m-d H:i:s') . " [log truncated: size limit reached]\n" . $line;
