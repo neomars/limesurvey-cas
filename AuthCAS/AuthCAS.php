@@ -280,8 +280,9 @@ class AuthCAS extends AuthPluginBase
         $authEvent = $this->getEvent();
         if ($oUser) {
             // Existing user: CAS login is allowed only with the auth_cas permission, even if autoCreate is set
-            $allowed = $this->checkLoginCasPermission($oUser->uid);
-            $this->debug('beforeLogin: LimeSurvey user "' . $this->getUserName() . '" found (uid ' . $oUser->uid . '), auth_cas permission: ' . ($allowed ? 'yes' : 'NO'));
+            $reason = '';
+            $allowed = $this->checkLoginCasPermission($oUser->uid, $reason);
+            $this->debug('beforeLogin: LimeSurvey user "' . $this->getUserName() . '" found (uid ' . $oUser->uid . '), auth_cas permission: ' . ($allowed ? 'yes' : 'NO') . ' (' . $reason . ')');
         } else {
             $allowed = ((int) $this->get('autoCreate') > 0);
             if ($this->isDebug()) {
@@ -298,7 +299,7 @@ class AuthCAS extends AuthPluginBase
             $this->debug('beforeLogin: CAS login refused, the local login form is displayed');
             $this->log(
                 'CAS login refused for "' . $this->getUserName() . '": ' . ($oUser
-                    ? 'user has no "Use CAS authentication" (auth_cas) permission'
+                    ? 'user has no "Use CAS authentication" (auth_cas) permission: ' . $reason
                     : 'user does not exist and autoCreate is disabled'),
                 CLogger::LEVEL_WARNING
             );
@@ -441,7 +442,7 @@ class AuthCAS extends AuthPluginBase
                            Permission::setPermissions($oUser->uid, 0, 'global', $this->api->getConfigKey('auth_cas_autocreate_permissions'), true);
                         }
                         /* Give connection permission */
-                        Permission::model()->setGlobalPermission($oUser->uid, 'auth_cas');
+                        $this->grantCasPermission($oUser->uid);
                         if ($this->api->getConfigKey('auth_cas_template_list'))
                         {
                            // Add permission on the templates defined in the config file
@@ -513,7 +514,7 @@ class AuthCAS extends AuthPluginBase
                     {
                         Permission::setPermissions($oUser->uid, 0, 'global', $this->api->getConfigKey('auth_cas_autocreate_permissions'), true);
                     }
-                    Permission::model()->setGlobalPermission($oUser->uid, 'auth_cas');
+                    $this->grantCasPermission($oUser->uid);
                     $this->debug('newUserSession: user "' . $oUser->users_name . '" created (uid ' . $oUser->uid . ')');
                     $this->setAuthSuccess($oUser, $authEvent);
 
@@ -588,12 +589,16 @@ class AuthCAS extends AuthPluginBase
             // phpCAS trace (requests to the CAS server, ticket validation, answers) goes to the debug file
             phpCAS::setLogger($this->getDebugLogger());
         }
+        // phpCAS adds the leading and trailing "/" but its clean-up turns "/" into "//" (https://cas.example.org//login):
+        // give it the path without slashes around ("" for the root, "/cas" for /cas/)
+        $cas_uri = trim((string) $this->get('casAuthUri'), '/');
+        $cas_uri = ($cas_uri === '') ? '' : '/' . $cas_uri;
         // Initialize phpCAS (service_base_url avoids building the service URL from the Host header : CVE-2022-39369)
         phpCAS::client(
             $this->get('casVersion'),
             $cas_host,
             (int) $this->get('casAuthPort'),
-            $this->get('casAuthUri'),
+            $cas_uri,
             $service_base_url,
             false
         );
@@ -784,23 +789,94 @@ class AuthCAS extends AuthPluginBase
      * @var integer userid
      * @return boolean
      */
-    private function checkLoginCasPermission($userid)
+    private function checkLoginCasPermission($userid, &$reason = null)
     {
         $oPermission = Permission::model()->find(
             "entity = 'global' AND entity_id = 0 AND uid = :uid AND permission = 'auth_cas'",
             array( ':uid' => $userid)
         );
+        if (!empty($oPermission) && $oPermission->read_p) {
+            $reason = 'auth_cas permission granted';
+            return true;
+        }
+        // Global permissions given by a role (LimeSurvey >= 4: user_in_permissionrole) are not in the user's lines
+        $aRoleIds = $this->getUserRoleIds($userid);
+        if (!empty($aRoleIds) && Permission::getPermissionByRoles($aRoleIds, 'auth_cas', 'read')) {
+            $reason = 'auth_cas permission granted by a role (roles of the user: ' . implode(', ', $aRoleIds) . ')';
+            return true;
+        }
         if (!empty($oPermission)) {
-            return (bool) $oPermission->read_p;
+            // LimeSurvey (UserManagementController::applyPermissionFromArray) saves a line for every global
+            // permission when the permissions of a user are saved: an unchecked "Use CAS authentication" box
+            // gives a line with read_p = 0, which can not be told apart from an explicit refusal
+            $reason = 'an auth_cas permission line exists with read = 0 (explicit refusal, or the box was left unchecked'
+                . ' when the global permissions of this user were saved): autoGrantCasPermission does not override it.'
+                . ' Check "Use CAS authentication" in the global permissions of this user';
+            return false;
         }
         if (!$this->get('autoGrantCasPermission')) {
+            $reason = 'no auth_cas permission and autoGrantCasPermission is disabled';
             return false;
         }
         if (Permission::model()->hasGlobalPermission('superadmin', 'read', $userid)) {
+            $reason = 'superadmin (superadmin permission, a role giving it, or forcedsuperadmin in config.php) without explicit'
+                . ' auth_cas permission: autoGrantCasPermission never applies to superadmins';
             return false;
         }
         /* Set it for next login */
-        Permission::model()->setGlobalPermission($userid, 'auth_cas');
+        if (!$this->grantCasPermission($userid)) {
+            $reason = 'autoGrantCasPermission: unable to save the auth_cas permission';
+            return false;
+        }
+        $reason = 'auth_cas permission granted automatically (autoGrantCasPermission)';
+        return true;
+    }
+
+    /**
+     * Ids of the roles of a user (empty before LimeSurvey 4, which has no roles)
+     * @param integer $userid
+     * @return integer[]
+     */
+    private function getUserRoleIds($userid)
+    {
+        if (!method_exists('Permission', 'getUserRole') || !method_exists('Permission', 'getPermissionByRoles')) {
+            return array();
+        }
+        try {
+            return array_values(CHtml::listData(Permission::getUserRole($userid), 'ptid', 'ptid'));
+        } catch (Exception $e) {
+            return array();
+        }
+    }
+
+    /**
+     * Give the global auth_cas permission (read) to a user.
+     * Permission::setGlobalPermission() does an INSERT: it fails on the unique index if the line already exists
+     * (for example when auth_cas is in auth_cas_autocreate_permissions), so the line is updated or created here.
+     * @param integer $userid
+     * @return boolean
+     */
+    private function grantCasPermission($userid)
+    {
+        $oPermission = Permission::model()->find(
+            "entity = 'global' AND entity_id = 0 AND uid = :uid AND permission = 'auth_cas'",
+            array(':uid' => $userid)
+        );
+        if (empty($oPermission)) {
+            $oPermission = new Permission();
+            $oPermission->entity = 'global';
+            $oPermission->entity_id = 0;
+            $oPermission->uid = $userid;
+            $oPermission->permission = 'auth_cas';
+            foreach (array('create_p', 'update_p', 'delete_p', 'import_p', 'export_p') as $sCrud) {
+                $oPermission->$sCrud = 0;
+            }
+        }
+        $oPermission->read_p = 1;
+        if (!$oPermission->save()) {
+            $this->log('Unable to save the auth_cas permission of user ' . $userid . ': ' . json_encode($oPermission->getErrors()), CLogger::LEVEL_ERROR);
+            return false;
+        }
         return true;
     }
 }
