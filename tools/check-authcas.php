@@ -301,11 +301,43 @@ if ($casLogin !== null) {
             $perms[$row['permission']] = (int) $row['read_p'];
         }
         $forced = isset($config['config']['forcedsuperadmin']) ? $config['config']['forcedsuperadmin'] : array(1);
-        $isSuperAdmin = !empty($perms['superadmin']) || in_array((int) $user['uid'], array_map('intval', (array) $forced), true);
-        info("User \"$login\" exists (uid {$user['uid']})" . ($isSuperAdmin ? ', superadmin' : ''));
-        if (isset($perms['auth_cas'])) {
-            $perms['auth_cas'] ? ok('auth_cas permission granted : CAS login allowed')
-                : ko('auth_cas permission explicitly refused : CAS login denied');
+        $isForced = in_array((int) $user['uid'], array_map('intval', (array) $forced), true);
+        // roles (LimeSurvey >= 4): their global permissions are lines with entity = 'role' and entity_id = role id
+        $rolePerms = array();
+        $roleIds = array();
+        try {
+            $stmt = $pdo->prepare("SELECT ptid FROM {$prefix}user_in_permissionrole WHERE uid = :uid");
+            $stmt->execute(array(':uid' => $user['uid']));
+            $roleIds = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+            if ($roleIds) {
+                $in = implode(',', $roleIds);
+                foreach ($pdo->query("SELECT permission FROM {$prefix}permissions WHERE entity = 'role' AND entity_id IN ($in) AND read_p = 1 AND permission IN ('auth_cas', 'superadmin')") as $row) {
+                    $rolePerms[$row['permission']] = 1;
+                }
+            }
+        } catch (PDOException $e) {
+            // no roles table before LimeSurvey 4
+        }
+        // as Permission::hasPermission(): when the user has roles, the roles decide and the superadmin line of the user is ignored
+        $superFromLine = !empty($perms['superadmin']) && !$roleIds;
+        $isSuperAdmin = $superFromLine || $isForced || !empty($rolePerms['superadmin']);
+        info("User \"$login\" exists (uid {$user['uid']})"
+            . ($roleIds ? ', roles: ' . implode(', ', $roleIds) : ', no role')
+            . ($isSuperAdmin ? ', superadmin (' . implode(', ', array_filter(array(
+                $superFromLine ? 'superadmin permission' : '',
+                $isForced ? 'forcedsuperadmin in config.php' : '',
+                !empty($rolePerms['superadmin']) ? 'given by a role' : '',
+            ))) . ')' : '')
+            . (!empty($perms['superadmin']) && $roleIds && empty($rolePerms['superadmin'])
+                ? ' (its superadmin permission is ignored by LimeSurvey: none of its roles gives superadmin)' : ''));
+        if (!empty($perms['auth_cas'])) {
+            ok('auth_cas permission granted : CAS login allowed');
+        } elseif (!empty($rolePerms['auth_cas'])) {
+            ok('auth_cas permission given by a role : CAS login allowed');
+        } elseif (isset($perms['auth_cas'])) {
+            ko('auth_cas permission line with read = 0 : CAS login denied, even with autoGrantCasPermission. '
+                    . 'LimeSurvey writes this line when the global permissions of the user are saved with "Use CAS authentication" unchecked: '
+                    . 'check it in the global permissions of this user');
         } elseif ($get('autoGrantCasPermission') && !$isSuperAdmin) {
             ok('No auth_cas permission yet : it will be granted on first CAS login (autoGrantCasPermission)');
         } else {
