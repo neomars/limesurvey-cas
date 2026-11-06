@@ -795,6 +795,12 @@ class AuthCAS extends AuthPluginBase
             $reason = 'auth_cas permission granted';
             return true;
         }
+        // Global permissions given by a role (LimeSurvey >= 4: user_in_permissionrole) are not in the user's lines
+        $aRoleIds = $this->getUserRoleIds($userid);
+        if (!empty($aRoleIds) && Permission::getPermissionByRoles($aRoleIds, 'auth_cas', 'read')) {
+            $reason = 'auth_cas permission granted by a role (roles of the user: ' . implode(', ', $aRoleIds) . ')';
+            return true;
+        }
         if (!empty($oPermission)) {
             // LimeSurvey (UserManagementController::applyPermissionFromArray) saves a line for every global
             // permission when the permissions of a user are saved: an unchecked "Use CAS authentication" box
@@ -817,5 +823,22 @@ class AuthCAS extends AuthPluginBase
         Permission::model()->setGlobalPermission($userid, 'auth_cas');
         $reason = 'auth_cas permission granted automatically (autoGrantCasPermission)';
         return true;
+    }
+
+    /**
+     * Ids of the roles of a user (empty before LimeSurvey 4, which has no roles)
+     * @param integer $userid
+     * @return integer[]
+     */
+    private function getUserRoleIds($userid)
+    {
+        if (!method_exists('Permission', 'getUserRole') || !method_exists('Permission', 'getPermissionByRoles')) {
+            return array();
+        }
+        try {
+            return array_values(CHtml::listData(Permission::getUserRole($userid), 'ptid', 'ptid'));
+        } catch (Exception $e) {
+            return array();
+        }
     }
 }

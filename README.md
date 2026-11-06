@@ -58,9 +58,11 @@ UPDATE lime_users SET users_name = LOWER(users_name);
 
 An existing LimeSurvey user can log in with CAS only if they have the global permission "Use CAS authentication" (`auth_cas`) set explicitly, even when automatic user creation is enabled. Superadministrators always need this explicit permission.
 
+The permission can be given to the user, or by one of their roles (LimeSurvey 4 and later: Configuration > User roles). A user is a superadministrator if they have the superadmin permission, if one of their roles gives it, or if their uid is in `forcedsuperadmin` in `config.php`.
+
 Before version 7.0.0, the permission was granted automatically to every existing user on their first CAS login. This let a CAS account take over the local account with the same login (for example `admin`). If you need the old behaviour for regular users, enable the `autoGrantCasPermission` setting: it never applies to superadministrators.
 
-`autoGrantCasPermission` only applies when the user has no `auth_cas` permission line at all. When the global permissions of a user are saved in Configuration > User management, LimeSurvey writes a line for every global permission: if "Use CAS authentication" is left unchecked, the user gets an `auth_cas` line set to 0, which is an explicit refusal, and `autoGrantCasPermission` does not override it. Check "Use CAS authentication" for this user.
+`autoGrantCasPermission` only applies when the user has no `auth_cas` permission line at all. When the global permissions of a user are saved in Configuration > User management, LimeSurvey writes a line for every global permission: if "Use CAS authentication" is left unchecked, the user gets an `auth_cas` line set to 0, which is an explicit refusal, and `autoGrantCasPermission` does not override it. Check "Use CAS authentication" for this user (or give it to one of their roles).
 
 Users created automatically by the plugin receive the permission when they are created.
 
@@ -75,7 +77,7 @@ Check the `casDebug` setting in the plugin configuration to trace every step of 
 
 - the plugin settings used and the CAS login URL and service URL that are built,
 - the user returned by the CAS server and the names of the attributes it sent (not their values),
-- whether the user exists in LimeSurvey, whether they have the `auth_cas` permission and the exact reason when a login is refused (also written to the LimeSurvey log as a warning),
+- whether the user exists in LimeSurvey, whether they have the `auth_cas` permission (given to the user, by a role, or automatically) and the exact reason when a login is refused (also written to the LimeSurvey log as a warning),
 - the phpCAS trace (requests to the CAS server, ticket validation).
 
 The last 300 lines of this file are also displayed in the plugin settings page, under the `casDebug` checkbox (reload the page to refresh them; the box is scrolled to the most recent lines).
