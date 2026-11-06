@@ -442,7 +442,7 @@ class AuthCAS extends AuthPluginBase
                            Permission::setPermissions($oUser->uid, 0, 'global', $this->api->getConfigKey('auth_cas_autocreate_permissions'), true);
                         }
                         /* Give connection permission */
-                        Permission::model()->setGlobalPermission($oUser->uid, 'auth_cas');
+                        $this->grantCasPermission($oUser->uid);
                         if ($this->api->getConfigKey('auth_cas_template_list'))
                         {
                            // Add permission on the templates defined in the config file
@@ -514,7 +514,7 @@ class AuthCAS extends AuthPluginBase
                     {
                         Permission::setPermissions($oUser->uid, 0, 'global', $this->api->getConfigKey('auth_cas_autocreate_permissions'), true);
                     }
-                    Permission::model()->setGlobalPermission($oUser->uid, 'auth_cas');
+                    $this->grantCasPermission($oUser->uid);
                     $this->debug('newUserSession: user "' . $oUser->users_name . '" created (uid ' . $oUser->uid . ')');
                     $this->setAuthSuccess($oUser, $authEvent);
 
@@ -820,7 +820,10 @@ class AuthCAS extends AuthPluginBase
             return false;
         }
         /* Set it for next login */
-        Permission::model()->setGlobalPermission($userid, 'auth_cas');
+        if (!$this->grantCasPermission($userid)) {
+            $reason = 'autoGrantCasPermission: unable to save the auth_cas permission';
+            return false;
+        }
         $reason = 'auth_cas permission granted automatically (autoGrantCasPermission)';
         return true;
     }
@@ -840,5 +843,36 @@ class AuthCAS extends AuthPluginBase
         } catch (Exception $e) {
             return array();
         }
+    }
+
+    /**
+     * Give the global auth_cas permission (read) to a user.
+     * Permission::setGlobalPermission() does an INSERT: it fails on the unique index if the line already exists
+     * (for example when auth_cas is in auth_cas_autocreate_permissions), so the line is updated or created here.
+     * @param integer $userid
+     * @return boolean
+     */
+    private function grantCasPermission($userid)
+    {
+        $oPermission = Permission::model()->find(
+            "entity = 'global' AND entity_id = 0 AND uid = :uid AND permission = 'auth_cas'",
+            array(':uid' => $userid)
+        );
+        if (empty($oPermission)) {
+            $oPermission = new Permission();
+            $oPermission->entity = 'global';
+            $oPermission->entity_id = 0;
+            $oPermission->uid = $userid;
+            $oPermission->permission = 'auth_cas';
+            foreach (array('create_p', 'update_p', 'delete_p', 'import_p', 'export_p') as $sCrud) {
+                $oPermission->$sCrud = 0;
+            }
+        }
+        $oPermission->read_p = 1;
+        if (!$oPermission->save()) {
+            $this->log('Unable to save the auth_cas permission of user ' . $userid . ': ' . json_encode($oPermission->getErrors()), CLogger::LEVEL_ERROR);
+            return false;
+        }
+        return true;
     }
 }
