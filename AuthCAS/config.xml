@@ -4,7 +4,7 @@
         <name>AuthCAS</name>
         <type>plugin</type>
         <creationDate>2015-10-03</creationDate>
-        <lastUpdate>2026-09-25</lastUpdate>
+        <lastUpdate>2026-11-06</lastUpdate>
         <version>7.0.0</version>
         <author>Guillaume Colson, Modification Martial Limousin</author>
         <authorUrl>https://www.univ-lorraine.fr/</authorUrl>
@@ -18,6 +18,7 @@
         <version>4</version>
         <version>5</version>
         <version>6</version>
+        <version>7</version>
     </compatibility>
 
     <updaters disabled="disabled">
