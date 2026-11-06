@@ -280,8 +280,9 @@ class AuthCAS extends AuthPluginBase
         $authEvent = $this->getEvent();
         if ($oUser) {
             // Existing user: CAS login is allowed only with the auth_cas permission, even if autoCreate is set
-            $allowed = $this->checkLoginCasPermission($oUser->uid);
-            $this->debug('beforeLogin: LimeSurvey user "' . $this->getUserName() . '" found (uid ' . $oUser->uid . '), auth_cas permission: ' . ($allowed ? 'yes' : 'NO'));
+            $reason = '';
+            $allowed = $this->checkLoginCasPermission($oUser->uid, $reason);
+            $this->debug('beforeLogin: LimeSurvey user "' . $this->getUserName() . '" found (uid ' . $oUser->uid . '), auth_cas permission: ' . ($allowed ? 'yes' : 'NO') . ' (' . $reason . ')');
         } else {
             $allowed = ((int) $this->get('autoCreate') > 0);
             if ($this->isDebug()) {
@@ -298,7 +299,7 @@ class AuthCAS extends AuthPluginBase
             $this->debug('beforeLogin: CAS login refused, the local login form is displayed');
             $this->log(
                 'CAS login refused for "' . $this->getUserName() . '": ' . ($oUser
-                    ? 'user has no "Use CAS authentication" (auth_cas) permission'
+                    ? 'user has no "Use CAS authentication" (auth_cas) permission: ' . $reason
                     : 'user does not exist and autoCreate is disabled'),
                 CLogger::LEVEL_WARNING
             );
@@ -784,23 +785,37 @@ class AuthCAS extends AuthPluginBase
      * @var integer userid
      * @return boolean
      */
-    private function checkLoginCasPermission($userid)
+    private function checkLoginCasPermission($userid, &$reason = null)
     {
         $oPermission = Permission::model()->find(
             "entity = 'global' AND entity_id = 0 AND uid = :uid AND permission = 'auth_cas'",
             array( ':uid' => $userid)
         );
+        if (!empty($oPermission) && $oPermission->read_p) {
+            $reason = 'auth_cas permission granted';
+            return true;
+        }
         if (!empty($oPermission)) {
-            return (bool) $oPermission->read_p;
+            // LimeSurvey (UserManagementController::applyPermissionFromArray) saves a line for every global
+            // permission when the permissions of a user are saved: an unchecked "Use CAS authentication" box
+            // gives a line with read_p = 0, which can not be told apart from an explicit refusal
+            $reason = 'an auth_cas permission line exists with read = 0 (explicit refusal, or the box was left unchecked'
+                . ' when the global permissions of this user were saved): autoGrantCasPermission does not override it.'
+                . ' Check "Use CAS authentication" in the global permissions of this user';
+            return false;
         }
         if (!$this->get('autoGrantCasPermission')) {
+            $reason = 'no auth_cas permission and autoGrantCasPermission is disabled';
             return false;
         }
         if (Permission::model()->hasGlobalPermission('superadmin', 'read', $userid)) {
+            $reason = 'superadmin (superadmin permission, a role giving it, or forcedsuperadmin in config.php) without explicit'
+                . ' auth_cas permission: autoGrantCasPermission never applies to superadmins';
             return false;
         }
         /* Set it for next login */
         Permission::model()->setGlobalPermission($userid, 'auth_cas');
+        $reason = 'auth_cas permission granted automatically (autoGrantCasPermission)';
         return true;
     }
 }
