@@ -122,17 +122,41 @@ class AuthCASDebugLogger
      */
     public static function mask($message)
     {
+        // phpCAS writes "<4 hex id> .|    |    " at the start of every line of its traces (CAS.php phpCAS::log()):
+        // the line-anchored rules below must accept it, otherwise nothing is masked in the phpCAS trace.
+        // The date and the indentation added by write() are accepted too: tail() masks the file content again
+        // (a file written by a previous version may contain values)
+        $p = '\s*(?:\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \[[0-9a-f]{4}\] )?(?:[0-9A-Fa-f]{4} \.(?:\|\s{4})*)?';
         // CAS tickets (ST-, PT-, PGT-, PGTIOU-, TGT-...), in URLs and in XML answers
         $message = preg_replace('/\b((?:ST|PT|PGT|PGTIOU|TGT|LT)-)[A-Za-z0-9._\-]+/', '$1***', $message);
         $message = preg_replace('/(ticket(?:=|%3D))[^&\s"\'<]+/i', '$1***', $message);
+        // cookies traced by phpCAS: "Cookie Line: NAME=value; Path=/" and "NAME -> value"
+        // (before the rule below: it would mask only "->" in "PHPSESSID -> value" and leave the value)
+        $message = preg_replace('/^(' . $p . '\s*Cookie Line:).*$/mi', '$1 ***', $message);
+        $message = preg_replace('/^(' . $p . '\s*[\w.\-]+ -> ).*$/m', '$1***', $message);
         // password, session cookies and tokens
         $message = preg_replace('/\b((?:pass(?:word)?|pwd|PHPSESSID|LS-[A-Za-z0-9]+|YII_CSRF_TOKEN)[=:\s"\']+)[^&\s"\';<]+/i', '$1***', $message);
-        // cookies traced by phpCAS: "Cookie Line: NAME=value; Path=/" and "NAME -> value"
-        $message = preg_replace('/^(\s*Cookie Line:).*$/mi', '$1 ***', $message);
-        $message = preg_replace('/^(\s*[\w.\-]+ -> ).*$/m', '$1***', $message);
         // values of the attributes traced by phpCAS: "* name=value" and print_r() dumps "[name] => value"
-        $message = preg_replace('/^(\s*\* [^=\s]+=).*$/m', '$1***', $message);
-        $message = preg_replace('/^(\s*\[[^\]]*\] => ).*$/m', '$1***', $message);
+        // ("[name] => Array" is kept: it is the structure of the dump, the values are on the next lines)
+        $message = preg_replace('/^(' . $p . '\s*\* [^=\s]+=).*$/m', '$1***', $message);
+        $message = preg_replace('/^(' . $p . '\s*\[[^\]\n]*\] => )(?!Array\s*$).+$/m', '$1***', $message);
+        // a value may span several lines (base64 photo wrapped at 76 columns, description...): the next lines are
+        // masked too, until the next line of the structure ("[name] =>", "* name=", "(", ")") or the next log entry
+        $lines = explode("\n", $message);
+        $inValue = false;
+        foreach ($lines as $i => $line) {
+            if (preg_match('/^\s*\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \[[0-9a-f]{4}\] /', $line)) {
+                $inValue = false;
+            }
+            if (preg_match('/^' . $p . '\s*(?:\[[^\]]*\] => |\* [^=\s]+=)(.*)$/', $line, $m)) {
+                $inValue = ($m[1] === '***');
+            } elseif (preg_match('/^' . $p . '\s*[()]\s*$/', $line)) {
+                $inValue = false;
+            } elseif ($inValue && preg_match('/^(' . $p . ')(.*)$/', $line, $m) && trim($m[2]) !== '') {
+                $lines[$i] = $m[1] . '***';
+            }
+        }
+        $message = implode("\n", $lines);
         // text of the XML elements of the CAS answer (attribute values, credentials), except the user name
         $message = preg_replace_callback('#<([\w.\-]+(?::[\w.\-]+)?)(\s[^>]*)?>([^<]+)</\1>#', function ($m) {
             if (strcasecmp($m[1], 'cas:user') === 0) {
