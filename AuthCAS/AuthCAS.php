@@ -589,12 +589,16 @@ class AuthCAS extends AuthPluginBase
             // phpCAS trace (requests to the CAS server, ticket validation, answers) goes to the debug file
             phpCAS::setLogger($this->getDebugLogger());
         }
+        // phpCAS adds the leading and trailing "/" but its clean-up turns "/" into "//" (https://cas.example.org//login):
+        // give it the path without slashes around ("" for the root, "/cas" for /cas/)
+        $cas_uri = trim((string) $this->get('casAuthUri'), '/');
+        $cas_uri = ($cas_uri === '') ? '' : '/' . $cas_uri;
         // Initialize phpCAS (service_base_url avoids building the service URL from the Host header : CVE-2022-39369)
         phpCAS::client(
             $this->get('casVersion'),
             $cas_host,
             (int) $this->get('casAuthPort'),
-            $this->get('casAuthUri'),
+            $cas_uri,
             $service_base_url,
             false
         );

@@ -233,7 +233,9 @@ if ($caCert === '') {
 section('Connection to the CAS server');
 /* ------------------------------------------------------------------ */
 if ($casHost && extension_loaded('curl')) {
-    $casUrl = 'https://' . $casHost . ($casPort == 443 ? '' : ':' . $casPort) . rtrim($casUri, '/') . '/login';
+    // same normalization of casAuthUri as AuthCAS::initCasClient()
+    $casPath = trim((string) $casUri, '/');
+    $casUrl = 'https://' . $casHost . ($casPort == 443 ? '' : ':' . $casPort) . ($casPath === '' ? '' : '/' . $casPath) . '/login';
     info("GET $casUrl");
     $ch = curl_init($casUrl);
     curl_setopt_array($ch, array(
